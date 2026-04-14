@@ -102,3 +102,66 @@ class TrashItem:
 
     def get_rect(self):
         return pygame.Rect(int(self.x)-self.R, int(self.y)-self.R, self.R*2, self.R*2)
+
+
+class ThrownTrash:
+    """Déchet lancé par le joueur suivant une trajectoire parabolique.
+
+    Équation de trajectoire :
+        x(t) = x0 + vx * t
+        y(t) = y0 + vy0 * t + 0.5 * g * t²
+    avec g = THROW_GRAVITY = 0.3 px/frame²
+    """
+    R = 16
+    THROW_GRAVITY = 0.3
+
+    def __init__(self, trash_type, x, y, target_x, target_y):
+        self.type = trash_type
+        self.x = float(x)
+        self.y = float(y)
+        self.alive = True
+
+        # Calcul de la vitesse initiale pour atteindre la cible en ~40 frames
+        flight_time = 40.0
+        self.vx = (target_x - x) / flight_time
+        # vy0 tel que y(T) = target_y : vy0 = (target_y - y0 - 0.5*g*T²) / T
+        self.vy = (target_y - y - 0.5 * self.THROW_GRAVITY * flight_time ** 2) / flight_time
+
+        self.trail = []  # traînée visuelle
+
+    def update(self):
+        # Stocker position pour la traînée
+        self.trail.append((int(self.x), int(self.y)))
+        if len(self.trail) > 12:
+            self.trail.pop(0)
+
+        self.vy += self.THROW_GRAVITY
+        self.x += self.vx
+        self.y += self.vy
+
+        # Disparaît si sort de l'écran
+        if self.y > SH or self.x < -50 or self.x > SW + 50:
+            self.alive = False
+
+    def draw(self, surf):
+        # Traînée
+        for i, (tx, ty) in enumerate(self.trail):
+            alpha = int(255 * i / max(len(self.trail), 1))
+            r = max(2, self.R * i // max(len(self.trail), 1))
+            c = TRASH_C[self.type]
+            trail_surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(trail_surf, (*c, alpha // 3), (r, r), r)
+            surf.blit(trail_surf, (tx - r, ty - r))
+
+        # Corps du déchet
+        cx, cy = int(self.x), int(self.y)
+        c = TRASH_C[self.type]
+        lc = TRASH_LT[self.type]
+        pygame.draw.circle(surf, TRASH_DK[self.type], (cx + 2, cy + 2), self.R)
+        pygame.draw.circle(surf, c, (cx, cy), self.R)
+        pygame.draw.circle(surf, lc, (cx - 4, cy - 4), self.R // 3)
+        pygame.draw.circle(surf, BLACK, (cx, cy), self.R, 2)
+
+    def get_rect(self):
+        return pygame.Rect(int(self.x) - self.R, int(self.y) - self.R,
+                           self.R * 2, self.R * 2)

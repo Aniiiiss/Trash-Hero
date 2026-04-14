@@ -47,13 +47,13 @@ BIN_T  = {'papier':(115,165,255),'verre':(105,230,162),'plastique':(255,248,110)
 
 LEVELS = [
     {'name':'Niveau 1 — Tutoriel','hint':'2 types · Pas d\'obstacles',
-     'types':['papier','verre'],'target':5,'speed':(1.5,2.5),'spawn':150,'obstacles':0,'time':90},
+     'types':['papier','verre'],'target':5,'total':8,'speed':(1.5,2.5),'spawn':150,'obstacles':0,'time':90},
     {'name':'Niveau 2 — En Route !','hint':'3 types · 1 obstacle',
-     'types':['papier','verre','plastique'],'target':8,'speed':(2.0,3.0),'spawn':120,'obstacles':1,'time':90},
+     'types':['papier','verre','plastique'],'target':8,'total':12,'speed':(2.0,3.0),'spawn':120,'obstacles':1,'time':90},
     {'name':'Niveau 3 — Ça se Complique','hint':'4 types · 2 obstacles',
-     'types':['papier','verre','plastique','organique'],'target':12,'speed':(2.5,3.5),'spawn':90,'obstacles':2,'time':90},
+     'types':['papier','verre','plastique','organique'],'target':12,'total':16,'speed':(2.5,3.5),'spawn':90,'obstacles':2,'time':90},
     {'name':'Niveau 4 — Déchets Furieux','hint':'4 types · 3 obstacles · Rapide !',
-     'types':['papier','verre','plastique','organique'],'target':15,'speed':(3.0,4.5),'spawn':70,'obstacles':3,'time':90},
+     'types':['papier','verre','plastique','organique'],'target':15,'total':19,'speed':(3.0,4.5),'spawn':70,'obstacles':3,'time':90},
     {'name':'Niveau 5 — Avant le Boss','hint':'Mode EXPERT !',
-     'types':['papier','verre','plastique','organique'],'target':20,'speed':(3.5,5.5),'spawn':55,'obstacles':4,'time':90},
+     'types':['papier','verre','plastique','organique'],'target':20,'total':25,'speed':(3.5,5.5),'spawn':55,'obstacles':4,'time':90},
 ]

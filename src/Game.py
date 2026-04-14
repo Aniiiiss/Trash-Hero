@@ -5,7 +5,7 @@ import random
 from src.settings import *
 from src.utils import *
 from src.player import Player
-from src.waste import TrashItem
+from src.waste import TrashItem, ThrownTrash
 from src.bin import TrashBin
 from src.boss import Boss, Obstacle
 
@@ -34,6 +34,8 @@ class Game:
         self.msg_color      = WHITE
         self.msg_timer      = 0
         self.particles      = []
+        self.thrown_items    = []
+        self.trash_spawned  = 0
         # Saisie mot de passe dev
         self.dev_input       = ''
         self.dev_input_active = False
@@ -56,7 +58,8 @@ class Game:
     def start_level(self, idx):
         cfg=LEVELS[idx]; self.current_level=idx
         self.player=Player(); self.trash_items=[]; self.obstacles=[]
-        self.particles=[]; self.score=0
+        self.thrown_items=[]; self.particles=[]; self.score=0
+        self.trash_spawned=0
         self.timer=cfg['time']*FPS; self.spawn_timer=0; self.obs_spawn=0
         types=cfg['types']; spacing=SW//(len(types)+1)
         self.bins=[TrashBin(t,spacing*(i+1)) for i,t in enumerate(types)]
@@ -64,8 +67,9 @@ class Game:
 
     def start_boss(self):
         self.boss=Boss(); self.player=Player()
-        self.trash_items=[]; self.obstacles=[]; self.particles=[]
-        self.score=0; self.timer=120*FPS; self.spawn_timer=0; self.obs_spawn=0
+        self.trash_items=[]; self.obstacles=[]; self.thrown_items=[]; self.particles=[]
+        self.score=0; self.trash_spawned=0
+        self.timer=120*FPS; self.spawn_timer=0; self.obs_spawn=0
         types=list(TRASH_C.keys()); spacing=SW//(len(types)+1)
         self.bins=[TrashBin(t,spacing*(i+1)) for i,t in enumerate(types)]
         self.state='boss'
@@ -105,10 +109,15 @@ class Game:
                 if event.key==pygame.K_ESCAPE:
                     if self.state in('playing','boss'): self.state='level_select'
                     elif self.state=='level_select': self.state='menu'
+                    elif self.state=='rules': self.state='menu'
 
                 # Touche E pour déposer dans la poubelle
                 if event.key == pygame.K_e and self.state in ('playing', 'boss'):
                     self._try_deposit()
+
+                # Touche F pour lancer le déchet vers la bonne poubelle
+                if event.key == pygame.K_f and self.state in ('playing', 'boss'):
+                    self._try_throw()
 
             if event.type==pygame.MOUSEBUTTONDOWN and event.button==1:
                 self._click(mp)
@@ -143,14 +152,36 @@ class Game:
                         self._msg('Mauvaise poubelle !', ORANGE)
                     break
 
+    def _try_throw(self):
+        if self.player and self.player.held:
+            # Trouver la poubelle correspondante au type porté
+            target_bin = None
+            for b in self.bins:
+                if b.type == self.player.held:
+                    target_bin = b
+                    break
+            if target_bin is None:
+                return
+            # Lancer le déchet vers la poubelle cible
+            thrown = ThrownTrash(
+                self.player.held,
+                self.player.x, self.player.y - 40,
+                target_bin.cx, target_bin.y + 20
+            )
+            self.thrown_items.append(thrown)
+            self.player.held = None
+
     def _click(self, pos):
         if self.state=='menu':
-            if br(SW//2,340,220,54).collidepoint(pos): self.state='level_select'
-            if br(SW//2,410,220,54).collidepoint(pos): pygame.quit(); sys.exit()
+            if br(SW//2,330,220,54).collidepoint(pos): self.state='level_select'
+            if br(SW//2,395,220,54).collidepoint(pos): self.state='rules'
+            if br(SW//2,460,220,54).collidepoint(pos): pygame.quit(); sys.exit()
             # Bouton mode dev
-            if br(SW//2,475,220,40).collidepoint(pos):
+            if br(SW//2,520,220,40).collidepoint(pos):
                 self.dev_input_active = True
                 self.dev_input = ''
+        elif self.state=='rules':
+            if br(SW//2,SH-40,200,46).collidepoint(pos): self.state='menu'
         elif self.state=='level_select':
             for i in range(5):
                 if self._cr(i).collidepoint(pos) and i<self.unlocked:
@@ -183,15 +214,19 @@ class Game:
         if self.timer<=0 and self.state=='playing':
             self.state='level_fail'; return
 
-        # Spawn déchets
+        # Spawn déchets (limité au total défini pour le niveau)
         self.spawn_timer+=1
         interval=cfg['spawn'] if cfg else 45
-        if self.spawn_timer>=interval:
+        total_limit=cfg['total'] if cfg else 999
+        if self.spawn_timer>=interval and self.trash_spawned<total_limit:
             self.spawn_timer=0
             types=cfg['types'] if cfg else list(TRASH_C.keys())
             speed=cfg['speed'] if cfg else (3.5,5.5)
-            for _ in range(1 if self.state=='playing' else 2):
-                self.trash_items.append(TrashItem(types,speed))
+            count = 1 if self.state=='playing' else 2
+            for _ in range(count):
+                if self.trash_spawned<total_limit:
+                    self.trash_items.append(TrashItem(types,speed))
+                    self.trash_spawned+=1
 
         # Spawn obstacles
         if self.state=='playing' and cfg['obstacles']>0:
@@ -219,6 +254,31 @@ class Game:
 
         # (Le dépôt se fait maintenant avec la touche E — voir handle_events)
 
+        # Mise à jour des déchets lancés
+        for thrown in self.thrown_items:
+            thrown.update()
+        # Collision déchets lancés → poubelles
+        for thrown in list(self.thrown_items):
+            if not thrown.alive:
+                continue
+            for b in self.bins:
+                if thrown.get_rect().colliderect(b.rect):
+                    if thrown.type == b.type:
+                        self.score += 1
+                        self._spawn_confetti(b.cx, b.y)
+                        self._msg('+1  Bien lancé !', (80,240,80))
+                        b.hit_good()
+                        if self.state == 'boss':
+                            if self.boss.take_hit():
+                                self.state = 'victory'; return
+                    else:
+                        if self.score > 0: self.score -= 1
+                        self._msg('Mauvaise poubelle !', ORANGE)
+                        b.hit_bad()
+                    thrown.alive = False
+                    break
+        self.thrown_items = [t for t in self.thrown_items if t.alive]
+
         # Obstacles
         for obs in self.obstacles:
             if self.player.rect.colliderect(obs.get_rect()):
@@ -227,6 +287,11 @@ class Game:
 
         if self.player.lives<=0:
             self.state='gameover' if self.state=='boss' else 'level_fail'; return
+        # Échec si tous les déchets ont été spawn et qu'il n'en reste plus à ramasser
+        if (self.state=='playing' and self.trash_spawned>=cfg['total']
+                and len(self.trash_items)==0 and len(self.thrown_items)==0
+                and self.player.held is None and self.score<cfg['target']):
+            self.state='level_fail'; return
         if self.state=='playing' and self.score>=cfg['target']:
             if self.current_level+2>self.unlocked and not self.dev_mode:
                 self.unlocked=min(self.current_level+2,6)
@@ -254,6 +319,7 @@ class Game:
 
     def draw(self):
         if   self.state=='menu':           self._menu()
+        elif self.state=='rules':          self._rules()
         elif self.state=='level_select':   self._level_select()
         elif self.state in('playing','boss'):self._game()
         elif self.state=='level_complete': self._end(True)
@@ -283,6 +349,7 @@ class Game:
                                          border_radius=12)
                         self.screen.blit(glow,(b.cx-b.BW//2-12,b.y-12))
         for item in self.trash_items: item.draw(self.screen)
+        for thrown in self.thrown_items: thrown.draw(self.screen)
         for obs in self.obstacles: obs.draw(self.screen)
         if self.state=='boss' and self.boss: self.boss.draw(self.screen)
         for px,py,vy,life,c in self.particles:
@@ -328,15 +395,20 @@ class Game:
             ind_surf=pygame.Surface((SW-40,24),pygame.SRCALPHA)
             pygame.draw.rect(ind_surf,(*c,80),(0,0,SW-40,24),border_radius=8)
             self.screen.blit(ind_surf,(20,SH-28))
-            txt(self.screen,f'Tu portes : {TRASH_LB[self.player.held]}  —  Appuie sur [E] pour déposer !',
+            txt(self.screen,f'Tu portes : {TRASH_LB[self.player.held]}  —  [E] Déposer  |  [F] Lancer',
                 SW//2,SH-16,16,WHITE,center=True)
 
         # Indicateur mode dev
         if self.dev_mode:
             txt(self.screen,'[DEV]',SW-40,42,12,(255,100,100),center=True)
 
+        # Déchets restants à spawn
+        if cfg:
+            remaining = cfg['total'] - self.trash_spawned + len(self.trash_items)
+            txt(self.screen,f'Déchets restants : {remaining}',SW//2,SH-50,12,(200,230,255),center=True)
+
         # Rappel contrôles
-        txt(self.screen,'ESPACE=Sauter  E=Déposer',SW//2,SH-38,11,(200,200,220),center=True)
+        txt(self.screen,'ESPACE=Sauter  E=Déposer  F=Lancer',SW//2,SH-38,11,(200,200,220),center=True)
 
     def _menu(self):
         self.screen.fill((28,22,62))
@@ -366,10 +438,11 @@ class Game:
             pygame.draw.circle(self.screen,BLACK,(bx,250+bob),26,2)
             txt(self.screen,TRASH_LB[t2],bx,284+bob,14,WHITE,center=True)
         mp=pygame.mouse.get_pos()
-        btn(self.screen,'JOUER',   SW//2,340,220,54,(70,175,70), br(SW//2,340,220,54).collidepoint(mp))
-        btn(self.screen,'QUITTER', SW//2,410,220,54,(175,55,55), br(SW//2,410,220,54).collidepoint(mp))
+        btn(self.screen,'JOUER',   SW//2,330,220,54,(70,175,70), br(SW//2,330,220,54).collidepoint(mp))
+        btn(self.screen,'RÈGLES',  SW//2,395,220,54,(55,120,190), br(SW//2,395,220,54).collidepoint(mp))
+        btn(self.screen,'QUITTER', SW//2,460,220,54,(175,55,55), br(SW//2,460,220,54).collidepoint(mp))
         # Bouton Mode Dev
-        btn(self.screen,'MODE DEV', SW//2,475,220,40,(100,80,160), br(SW//2,475,220,40).collidepoint(mp))
+        btn(self.screen,'MODE DEV', SW//2,520,220,40,(100,80,160), br(SW//2,520,220,40).collidepoint(mp))
 
         # Champ de saisie du mot de passe
         if self.dev_input_active:
@@ -397,6 +470,65 @@ class Game:
 
         txt(self.screen,'EFREI Paris — Module TI250 — 2025-2026',
             SW//2,SH-16,14,(120,120,148),center=True)
+
+    def _rules(self):
+        self.screen.fill((28,22,62))
+        t = pygame.time.get_ticks()/1000
+        for sx,sy,sr in self.stars:
+            alpha=int(155+math.sin(t+sx)*100)
+            c=tuple(min(255,v) for v in (alpha,alpha,alpha))
+            pygame.draw.circle(self.screen,c,(sx,sy),sr)
+
+        # Titre
+        title_r = pygame.Rect(SW//2-180, 30, 360, 55)
+        draw_gradient_box(self.screen, title_r, (55,120,190), (35,80,150), 14)
+        txt(self.screen, 'RÈGLES DU JEU', SW//2, 58, 36, YELLOW, center=True)
+
+        # Cadre des règles
+        box = pygame.Rect(50, 100, SW-100, 400)
+        draw_gradient_box(self.screen, box, (45,35,85), (30,22,62), 14)
+
+        rules = [
+            ("1.", "Attrape les déchets qui tombent en les touchant."),
+            ("2.", "Chaque déchet a une couleur : Papier (bleu),"),
+            ("",   "Verre (vert), Plastique (jaune), Bio (marron)."),
+            ("3.", "Dépose le déchet dans la bonne poubelle"),
+            ("",   "en appuyant sur [E] quand tu es devant."),
+            ("4.", "Tu peux aussi LANCER le déchet avec [F] !"),
+            ("",   "Il vole tout seul vers la bonne poubelle."),
+            ("5.", "Appuie sur ESPACE pour sauter par-dessus"),
+            ("",   "les monstres rouges qui te font perdre une vie."),
+            ("6.", "Tu as 3 vies (les coeurs en haut à droite)."),
+            ("",   "Si tu en perds trop, c'est perdu !"),
+            ("7.", "Attention : il y a un nombre limité de déchets."),
+            ("",   "Ne te trompe pas trop de poubelle !"),
+            ("8.", "Finis tous les niveaux pour affronter le BOSS !"),
+        ]
+
+        y = 120
+        for num, line in rules:
+            if num:
+                txt(self.screen, num, 80, y, 18, YELLOW)
+            txt(self.screen, line, 110, y, 17, WHITE)
+            y += 26
+
+        # Légende couleurs
+        y += 10
+        txt(self.screen, 'Les couleurs des poubelles :', SW//2, y, 18, YELLOW, center=True)
+        y += 28
+        labels = [('Papier', TRASH_C['papier']), ('Verre', TRASH_C['verre']),
+                  ('Plastique', TRASH_C['plastique']), ('Bio', TRASH_C['organique'])]
+        total_w = len(labels) * 140
+        start_x = SW//2 - total_w//2 + 70
+        for i, (name, col) in enumerate(labels):
+            bx = start_x + i * 140
+            pygame.draw.circle(self.screen, col, (bx, y), 14)
+            pygame.draw.circle(self.screen, BLACK, (bx, y), 14, 2)
+            txt(self.screen, name, bx, y + 22, 14, WHITE, center=True)
+
+        mp = pygame.mouse.get_pos()
+        btn(self.screen, '<- Retour', SW//2, SH-40, 200, 46, (65,70,115),
+            br(SW//2, SH-40, 200, 46).collidepoint(mp))
 
     def _level_select(self):
         self.screen.fill((24,42,75))
